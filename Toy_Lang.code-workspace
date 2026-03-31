@@ -1,9 +1,11 @@
 {
 	"folders": [
 		{
+			"name": "Toy_Lang",
 			"path": "."
 		},
 		{
+			"name": "SimpleSlicesLibrary",
 			"path": "../SimpleSlicesLibrary"
 		}
 	],
