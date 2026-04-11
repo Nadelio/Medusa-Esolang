@@ -45,28 +45,88 @@ void set(Map* map, i32 key, i32 value) {
 }
 
 typedef struct {
-	i32 stack[64];
+	i32 value;
+	i32 position;
+	bool is_literal;
+} Variable;
+
+typedef struct {
+	Variable* stack[64];
 	size_t top;
 	size_t size;
-} Stack;
+} StackVariable;
 
-Stack* build() {
-	Stack* stack = (Stack*)malloc(sizeof(Stack));
+StackVariable* build_varstack() {
+	StackVariable* stack = (StackVariable*)malloc(sizeof(StackVariable));
 	stack->top = -1;
 	stack->size = 64;
 	return stack;
 }
 
-bool is_empty(Stack* stack) {
+void deconstruct(StackVariable* varstack) {
+	for(int i = 0; i < varstack->size; i++) {
+		free(varstack->stack[i]);
+	}
+	free(varstack);
+}
+
+bool is_varstack_empty(StackVariable* stack) {
 	return stack->top == -1;
 }
 
-bool is_full(Stack* stack) {
+bool is_varstack_full(StackVariable* stack) {
 	return stack->top == stack->size;
 }
 
-i32 pop(Stack* stack) {
-	if(stack->top < 0) {
+Variable* pop_varstack(StackVariable* stack) {
+	if(is_varstack_empty(stack)) {
+		printf("[ERROR] Stack underflow.\n");
+		return NULL;
+	}
+	stack->top -= 1;
+	return stack->stack[stack->top + 1];
+}
+
+Variable* peek_varstack(StackVariable* stack) {
+	if(is_varstack_empty(stack)) {
+		printf("[ERROR] Stack is empty");
+		return NULL;
+	}
+	return stack->stack[stack->top];
+}
+
+void push_varstack(StackVariable* stack, Variable* value) {
+	if(is_varstack_full(stack)) {
+		printf("[ERROR] Stack overflow.\n");
+		return;
+	}
+	stack->top += 1;
+	stack->stack[stack->top] = value;
+}
+
+typedef struct {
+	i32 stack[64];
+	size_t top;
+	size_t size;
+} Stacki32;
+
+Stacki32* build() {
+	Stacki32* stack = (Stacki32*)malloc(sizeof(Stacki32));
+	stack->top = -1;
+	stack->size = 64;
+	return stack;
+}
+
+bool is_empty(Stacki32* stack) {
+	return stack->top == -1;
+}
+
+bool is_full(Stacki32* stack) {
+	return stack->top == stack->size;
+}
+
+i32 pop(Stacki32* stack) {
+	if(is_empty(stack)) {
 		printf("[ERROR] Stack underflow.\n");
 		return -1;
 	}
@@ -74,16 +134,16 @@ i32 pop(Stack* stack) {
 	return stack->stack[stack->top + 1];
 }
 
-i32 peek(Stack* stack) {
-	if(stack->top == -1) {
+i32 peek(Stacki32* stack) {
+	if(is_empty(stack)) {
 		printf("[ERROR] Stack is empty");
 		return 0;
 	}
 	return stack->stack[stack->top];
 }
 
-void push(Stack* stack, i32 value) {
-	if(stack->top == stack->size) {
+void push(Stacki32* stack, i32 value) {
+	if(is_full(stack)) {
 		printf("[ERROR] Stack overflow.\n");
 		return;
 	}
@@ -180,7 +240,7 @@ enum TokenValues {
 	DATA_PTR_REF,
 	PROG_PTR_REF,
 	ASSIGN,
-	COLON,
+	ADDRESS_ASSIGN,
 	AMPERSAND,
 	ASTRICK,
 	DIV,
@@ -230,6 +290,8 @@ Steps:
 i32* parse(FILE* source_file);
 /// Returns the program status
 i32 run(i32* program, size_t program_size);
+/// evaluates the interpreter stacks
+i32 evaluate(Stacki32* opstack, StackVariable* varstack);
 
 /*
 Command line arguments:
@@ -492,7 +554,7 @@ i32* parse(FILE* source_file) {
 				}
 				break;
 			case ':':
-				compiled_code[write_index] = COLON;
+				compiled_code[write_index] = ADDRESS_ASSIGN;
 				write_index++;
 				break;
 			case '&':
@@ -680,8 +742,8 @@ i32 run(i32* program, size_t program_size) {
 	Map* vtable = (Map*)malloc(sizeof(Map));
 
 	// evaluation stacks
-	Stack* numstack = build();
-	Stack* opstack = build();
+	StackVariable* varstack = build_varstack();
+	Stacki32* opstack = build();
 	// NOTE: both stacks are [i32] b/c both operands, variables, and literal values are all i32
 
 	// initialize memory
@@ -696,15 +758,96 @@ i32 run(i32* program, size_t program_size) {
 			case _NULL:
 				// do nothing, equivalent to NOP
 				break;
-			// double check these, b/c I don't think they are correct
 			case VARIABLE:
-				push(numstack, get(vtable, *(prog_ptr + 1)));
+				i32 var_index = *(prog_ptr + 1);
+				i32 var_value = get(vtable, var_index);
+				Variable* v = (Variable*)malloc(sizeof(Variable));
+				*v = (Variable){.value = var_value, .position = var_index, .is_literal = false};
+				push_varstack(varstack, v);
+				prog_ptr += 1;
 				break;
 			case DATA_PTR_REF:
-				push(numstack, get(vtable, *data_ptr));
+				i32 data_position = (i32)(data_ptr - mem_space); // get the index in memory that the data pointer is at
+				i32 data_value = *data_ptr; // get the value at the data pointer
+				Variable* d = (Variable*)malloc(sizeof(Variable));
+				*d = (Variable){ .value = data_value, .position = data_position, .is_literal = false};
+				push_varstack(varstack, d);
 				break;
 			case PROG_PTR_REF:
-				push(numstack, get(vtable, *prog_ptr));
+				i32 prog_position = (i32)(prog_ptr - mem_space);
+				i32 prog_value = *prog_ptr;
+				Variable* p = (Variable*)malloc(sizeof(Variable));
+				*p = (Variable){ .value = prog_value, .position = prog_position, .is_literal = false};
+				push_varstack(varstack, p);
+				break;
+			case ASSIGN:
+				push(opstack, ASSIGN);
+				break;
+			case ADDRESS_ASSIGN:
+				push(opstack, ADDRESS_ASSIGN);
+				break;
+			case AMPERSAND:
+				push(opstack, AMPERSAND);
+				break;
+			case ASTRICK:
+				push(opstack, ASTRICK);
+				break;
+			case DIV:
+				push(opstack, DIV);
+				break;
+			case PLUS:
+				push(opstack, PLUS);
+				break;
+			case INC:
+				push(opstack, INC);
+				break;
+			case MINUS:
+				push(opstack, MINUS);
+				break;
+			case DEC:
+				push(opstack, DEC);
+				break;
+			case EQUIV:
+				push(opstack, EQUIV);
+				break;
+			case NOT_EQUIV:
+				push(opstack, NOT_EQUIV);
+				break;
+			case LESS:
+				push(opstack, LESS);
+				break;
+			case GREATER:
+				push(opstack, GREATER);
+				break;
+			case LESS_EQUAL:
+				push(opstack, LESS_EQUAL);
+				break;
+			case GREATER_EQUAL:
+				push(opstack, GREATER_EQUAL);
+				break;
+			case RIGHT_ARROW:
+				push(opstack, RIGHT_ARROW);
+				break;
+			case LEFT_ARROW:
+				push(opstack, LEFT_ARROW);
+				break;
+			case BEGIN_SCOPE:
+			case END_SCOPE:
+			case DEFINE_SCOPE_ITERATIONS:
+			case BREAK_FROM_SCOPE:
+			case INFINITE_LOOP:
+			case DEFINE_DATA_MEM_SIZE:
+			case INT_LITERAL:
+				i32 lit_index = (i32)(prog_ptr - mem_space);
+				i32 lit_value = *prog_ptr;
+				Variable* lit = (Variable*)malloc(sizeof(Variable));
+				*lit = (Variable){.position = lit_index, .value = lit_value, .is_literal = true};
+				push_varstack(varstack, lit);
+				break;
+			case EOS: // end of statement
+				i32 result = evaluate(opstack, varstack);
+				if(result < 0) { /* some error occurred, handle errors */ }
+				break;
 			default: break;
 		}
 
@@ -718,6 +861,14 @@ i32 run(i32* program, size_t program_size) {
 	// clean up runtime memory space
 	free(mem_space);
 	free(vtable);
+	deconstruct(varstack); // since varstack contains pointers to all the Variables that were allocated, we need to deallocate those variables as well
+	free(opstack);
 
 	return FAIL;
+}
+
+i32 evaluate(Stacki32* opstack, StackVariable* varstack) {
+	// implemented evaluation of stacks
+	// make sure to free all the used Variable pointers that are no longer needed at the end of this function
+	return -100; // not implemented yet
 }
