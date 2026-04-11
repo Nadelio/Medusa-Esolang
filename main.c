@@ -11,6 +11,7 @@ typedef int32_t i32;
 typedef struct {
 	i32 key;
 	i32 value;
+	i32 position;
 } MapElement;
 
 typedef struct {
@@ -18,35 +19,38 @@ typedef struct {
 	MapElement* pairs;
 } Map;
 
-void put(Map* map, i32 key, i32 value) {
+void put(Map* map, i32 key, i32 value, i32 position) {
 	map->pairs = realloc(map->pairs, sizeof(MapElement*) * (map->size + 1));
-	map->pairs[map->size] = (MapElement){ .key = key, .value = value };
+	map->pairs[map->size] = (MapElement){ .key = key, .value = value, .position = position };
 	map->size = map->size + 1;
 }
 
-i32 get(Map* map, i32 key) {
+MapElement* get(Map* map, i32 key) {
 	for(int i = 0; i < map->size; i++) {
 		if(map->pairs[i].key == key) {
-			return map->pairs[i].value;
+			return &map->pairs[i];
 		}
 	}
-	printf("[WARNING] `get()` failed to find value referenced by %d.\n  Adding placeholder: { %d : 0 }\n", key, key);
-	put(map, key, 0);
+	printf("[WARNING] `get()` failed to find value referenced by %d.\n  Adding placeholder: { %d : (0, 0) }\n", key, key);
+	put(map, key, 0, 0);
 	return 0;
 }
 
-void set(Map* map, i32 key, i32 value) {
+void set(Map* map, i32 indent, i32 value, i32 address) {
 	for(int i = 0; i < map->size; i++) {
-		if(map->pairs[i].key == key) {
+		if(map->pairs[i].key == indent) {
 			map->pairs[i].value = value;
+			map->pairs[i].position = address;
+			return;
 		}
 	}
-	put(map, key, value);
+	put(map, indent, value, address);
 }
 
 typedef struct {
 	i32 value;
-	i32 position;
+	i32 indent;
+	i32 address;
 	bool is_literal;
 } Variable;
 
@@ -290,8 +294,8 @@ Steps:
 i32* parse(FILE* source_file);
 /// Returns the program status
 i32 run(i32* program, size_t program_size);
-/// evaluates the interpreter stacks
-i32 evaluate(Stacki32* opstack, StackVariable* varstack);
+// attempts to build a Variable out of the given token
+Variable* attempt_build_var(i32 token);
 
 /*
 Command line arguments:
@@ -744,12 +748,16 @@ i32 run(i32* program, size_t program_size) {
 	// evaluation stacks
 	StackVariable* varstack = build_varstack();
 	Stacki32* opstack = build();
-	// NOTE: both stacks are [i32] b/c both operands, variables, and literal values are all i32
+	Stacki32* result_stack = build();
 
 	// initialize memory
 	memcpy(prog_ptr, program, program_size);
 	memset(data_ptr, 0, data_mem_size);
-	
+
+	// interpreter variables
+	Variable* left;
+	Variable* right;
+
 	// begin running program
 	while(*prog_ptr != EOD) {
 		switch(*prog_ptr) {
@@ -760,37 +768,59 @@ i32 run(i32* program, size_t program_size) {
 				break;
 			case VARIABLE:
 				i32 var_index = *(prog_ptr + 1);
-				i32 var_value = get(vtable, var_index);
+				MapElement* var = get(vtable, var_index);
 				Variable* v = (Variable*)malloc(sizeof(Variable));
-				*v = (Variable){.value = var_value, .position = var_index, .is_literal = false};
+				*v = (Variable){.value = var->value, .indent = var->key, .address = var_index, .is_literal = false};
 				push_varstack(varstack, v);
-				prog_ptr += 1;
+				prog_ptr += 1; // consume both the C and the variable index
 				break;
 			case DATA_PTR_REF:
 				i32 data_position = (i32)(data_ptr - mem_space); // get the index in memory that the data pointer is at
 				i32 data_value = *data_ptr; // get the value at the data pointer
 				Variable* d = (Variable*)malloc(sizeof(Variable));
-				*d = (Variable){ .value = data_value, .position = data_position, .is_literal = false};
+				*d = (Variable){ .value = data_value, .indent = -1, .address = data_position, .is_literal = false};
 				push_varstack(varstack, d);
 				break;
 			case PROG_PTR_REF:
 				i32 prog_position = (i32)(prog_ptr - mem_space);
 				i32 prog_value = *prog_ptr;
 				Variable* p = (Variable*)malloc(sizeof(Variable));
-				*p = (Variable){ .value = prog_value, .position = prog_position, .is_literal = false};
+				*p = (Variable){ .value = prog_value, .indent = -1, .address = prog_position, .is_literal = false};
 				push_varstack(varstack, p);
 				break;
 			case ASSIGN:
-				push(opstack, ASSIGN);
+				left = pop_varstack(varstack);
+				if(left == NULL) {
+					interpreter_err_msg = "[ERROR] Syntax Error: Expected a variable or integer literal before `+`.";
+					return SYNTAX_ERROR;
+				}
+
+				right = attempt_build_var(*(prog_ptr + 1));
+				if(right == NULL) {
+					interpreter_err_msg = "[ERROR] Syntax Error: Expected a variable or integer literal following `+`.";
+					return SYNTAX_ERROR;
+				}
+				
+				set(vtable, left->indent, right->value, left->address); // if right has a modifier like * or &, right->value will be changed accordingly
+				
 				break;
 			case ADDRESS_ASSIGN:
-				push(opstack, ADDRESS_ASSIGN);
-				break;
-			case AMPERSAND:
-				push(opstack, AMPERSAND);
+				left = pop_varstack(varstack);
+				if(left == NULL) {
+					interpreter_err_msg = "[ERROR] Syntax Error: Expected a variable or integer literal before `+`.";
+					return SYNTAX_ERROR;
+				}
+
+				right = attempt_build_var(*(prog_ptr + 1));
+				if(right == NULL) {
+					interpreter_err_msg = "[ERROR] Syntax Error: Expected a variable or integer literal following `+`.";
+					return SYNTAX_ERROR;
+				}
+				
+				set(vtable, left->indent, left->value, right->address); // if right has a modifier like * or &, right->value will be changed accordingly
 				break;
 			case ASTRICK:
-				push(opstack, ASTRICK);
+				// need to detect when multiplication or when deref
 				break;
 			case DIV:
 				push(opstack, DIV);
@@ -831,24 +861,20 @@ i32 run(i32* program, size_t program_size) {
 			case LEFT_ARROW:
 				push(opstack, LEFT_ARROW);
 				break;
+			// not sure how I am supposed to handle these
 			case BEGIN_SCOPE:
-
-			case END_SCOPE:
+				// consume until END_SCOPE?
 			case DEFINE_SCOPE_ITERATIONS:
-			case BREAK_FROM_SCOPE:
 			case INFINITE_LOOP:
-			case DEFINE_DATA_MEM_SIZE:
+			case BREAK_FROM_SCOPE:
 			case INT_LITERAL:
 				i32 lit_index = (i32)(prog_ptr - mem_space);
 				i32 lit_value = *prog_ptr;
 				Variable* lit = (Variable*)malloc(sizeof(Variable));
-				*lit = (Variable){.position = lit_index, .value = lit_value, .is_literal = true};
+				*lit = (Variable){.indent = lit_index, .value = lit_value, .address = 0, .is_literal = true};
 				push_varstack(varstack, lit);
 				break;
 			case EOS: // end of statement
-				i32 result = evaluate(opstack, varstack);
-				if(result < 0) { /* some error occurred, handle errors */ }
-				break;
 			default: break;
 		}
 
@@ -864,12 +890,13 @@ i32 run(i32* program, size_t program_size) {
 	free(vtable);
 	deconstruct(varstack); // since varstack contains pointers to all the Variables that were allocated, we need to deallocate those variables as well
 	free(opstack);
+	free(result_stack);
 
 	return FAIL;
 }
 
-i32 evaluate(Stacki32* opstack, StackVariable* varstack) {
-	// implemented evaluation of stacks
-	// make sure to free all the used Variable pointers that are no longer needed at the end of this function
-	return -100; // not implemented yet
+Variable* attempt_build_var(i32 token) {
+	// need to handle value modifiers like dereference (*) and reference (&)
+	// need to handle variables, system pointers, and integer literals
+	return NULL;
 }

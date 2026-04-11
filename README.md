@@ -15,6 +15,9 @@ Anyways, here are the different instructions:
 `C0 : 12` - set address of variable\
 `C0 = 10` - set value of variable\
 `C1 = &C0` - store the address of a variable
+`C2 = *C1` - dereference a variable
+`<- C0` - decrement address of a variable
+`-> C0` - increment address of a variable
 
 ## System Pointer Instructions
 `<- P` - move left program ptr\
