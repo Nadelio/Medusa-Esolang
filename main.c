@@ -832,6 +832,7 @@ i32 run(i32* program, size_t program_size) {
 				push(opstack, LEFT_ARROW);
 				break;
 			case BEGIN_SCOPE:
+
 			case END_SCOPE:
 			case DEFINE_SCOPE_ITERATIONS:
 			case BREAK_FROM_SCOPE:
