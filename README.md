@@ -62,6 +62,8 @@ Anyways, here are the different instructions:
 
 > [!note]
 > Integers compile to TWO bytecode instructions `I` and then the integer.
+> The interpreter is a stack machine.
+> The compiler/parser converts infix expressions to postfix.
 
 
 ## Turing Completeness
