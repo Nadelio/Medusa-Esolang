@@ -585,13 +585,13 @@ static bool next_token_from_source(const char* source, size_t code_len, size_t* 
             *token = (ParsedToken){ .type = PRINT, .value = 0, .has_value = false };
             return true;
 		default:
-			printf("[WARNING] Skipping unknown token '%c' at index %zu\n", curr, *index);
+			print_warning(" Skipping unknown token '%c' at index %zu\n", curr, *index);
 			(*index)++;
 			return next_token_from_source(source, code_len, index, token);
 	}
 }
 
-i32* parse(FILE* source_file) {
+i32* parse(bool verbose, FILE* source_file) {
 	char* source_code;
 	size_t code_len = 0;
 	int current_char;
@@ -618,7 +618,7 @@ i32* parse(FILE* source_file) {
 	}
 
 	source_code[code_len] = '\0'; // null terminate
-	printf("[DEBUG] Source code:\n%s\n", source_code);
+	print_debug(verbose, " Source code:\n%s\n", source_code);
 
 	size_t compiled_capacity = code_len > 0 ? code_len * 4 : 64;
 	i32* compiled_code = malloc(sizeof(i32) * compiled_capacity);

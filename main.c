@@ -34,13 +34,13 @@ i32 main(int argc, char** argv) {
 				size_t input_len = strlen(argv[i + 1]) + 1;
 				name_of_input_file = malloc(input_len);
 				if(name_of_input_file == NULL) {
-					fprintf(stderr, "[ERROR] Failed to allocate memory for input filename\n");
+					print_error(" Failed to allocate memory for input filename\n");
 					return 1;
 				}
 				strcpy_s(name_of_input_file, input_len, argv[i + 1]);
 				i++;
 			} else {
-				printf("[ERROR] Missing a file name for input flag.");
+				print_error(" Missing a file name for input flag.");
 				return 1;
 			}
 		}
@@ -51,22 +51,22 @@ i32 main(int argc, char** argv) {
 				size_t output_len = strlen(argv[i + 1]) + 1;
 				name_of_output_file = malloc(output_len);
 				if(name_of_output_file == NULL) {
-					fprintf(stderr, "[ERROR] Failed to allocate memory for output filename\n");
+					print_error(" Failed to allocate memory for output filename\n");
 					return 1;
 				}
 				strcpy_s(name_of_output_file, output_len, argv[i + 1]);
 				i++;
 			} else {
-				printf("[ERROR] Missing a file name for output flag.");
+				print_error(" Missing a file name for output flag.");
 				return 1;
 			}
 		}
 	}
 
 	if(argc == 1) {
-		printf("[DEBUG] No flags passed in.");
+		print_debug(verbose, " No flags passed in.");
 	} else {
-		printf("[DEBUG] Flags:\n  Verbose? %d\n  Input file? %d Name: %s\n  Export binary? %d Name: %s\n", 
+		print_debug(verbose, " Flags:\n  Verbose? %d\n  Input file? %d Name: %s\n  Export binary? %d Name: %s\n", 
 		       verbose, 
 		       use_existing_file, 
 		       name_of_input_file ? name_of_input_file : "(none)",
@@ -75,20 +75,20 @@ i32 main(int argc, char** argv) {
 	}
 
 	if (use_existing_file) {
-		printf("[DEBUG] Using existing file...\n");
+		print_debug(verbose, " Using existing file...\n");
 
 		FILE* source_file;
 		errno_t err = fopen_s(&source_file, name_of_input_file, "r");
 		if(err != 0) {
 			char err_buf[128];
 			strerror_s(err_buf, sizeof(err_buf), err);
-			fprintf(stderr, "[ERROR] Cannot open file %s.\n\tError: %s\n", name_of_input_file, err_buf);
+			print_error(" Cannot open file %s.\n\tError: %s\n", name_of_input_file, err_buf);
 			return 1;
 		}
 		
-		printf("[DEBUG] Parsing %s...\n", name_of_input_file);
+		print_debug(verbose, " Parsing %s...\n", name_of_input_file);
 
-		i32* compiled_program = parse(source_file);
+		i32* compiled_program = parse(verbose, source_file);
 		
 		size_t program_len = 0;
 		while(compiled_program[program_len] != EOD) {
@@ -96,12 +96,14 @@ i32 main(int argc, char** argv) {
 		}
 		program_len++;
 
-		printf("[DEBUG] Compiled program (modified slightly for readability):\n");
-		print_compiled_program(compiled_program, program_len);
+		print_debug(verbose, " Compiled program (modified slightly for readability):\n");
+		if(verbose) {
+			print_compiled_program(compiled_program, program_len);
+		}
 
 		// export program to file
 		if(export_binary) {
-			printf("[DEBUG] Exporting compiled program to %s...\n", name_of_output_file);
+			print_debug(verbose, " Exporting compiled program to %s...\n", name_of_output_file);
 
 			if(name_of_output_file == NULL) name_of_output_file = "a.bin";
 
@@ -110,17 +112,17 @@ i32 main(int argc, char** argv) {
 			if(export_errors != 0) {
 				char err_buf[128];
 				strerror_s(err_buf, sizeof(err_buf), export_errors);
-				fprintf(stderr, "[ERROR] Cannot export file %s.\n\tError: %s\n", name_of_output_file, err_buf);
+				print_error(" Cannot export file %s.\n\tError: %s\n", name_of_output_file, err_buf);
 				return 1;
 			}
 		
 			fwrite(compiled_program, sizeof(i32), program_len, exported_file);
 			fclose(exported_file);
-			printf("[DEBUG] Successfully exported program to %s.\n", name_of_output_file);
+			print_debug(verbose, " Successfully exported program to %s.\n", name_of_output_file);
 		}
 
-		i32 status = run(compiled_program, program_len);
-		printf("[DEBUG] Runtime status: %d\n", status);
+		i32 status = run(verbose, compiled_program, program_len);
+		print_debug(verbose, " Runtime status: %d\n", status);
 
 		if(name_of_input_file) free(name_of_input_file);
 		if(name_of_output_file) free(name_of_output_file);

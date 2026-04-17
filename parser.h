@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include "structs.h"
+#include "debug.h"
 
 enum TokenValues {
 	EOD = -1,
@@ -53,7 +54,7 @@ enum STATUS {
 extern char* interpreter_err_msg;
 extern size_t data_mem_size;
 
-i32* parse(FILE* source_file);
-i32 run(i32* program, size_t program_size);
+i32* parse(bool verbose, FILE* source_file);
+i32 run(bool verbose, i32* program, size_t program_size);
 
 #endif

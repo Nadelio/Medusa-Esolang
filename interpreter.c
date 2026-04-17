@@ -59,12 +59,12 @@ static void write_data_cell(i32* data_base, i32 address, i32 value) {
 	data_base[address] = value;
 }
 
-i32 run(i32* program, size_t program_size) {
-	printf("[DEBUG] Beginning program...\n");
+i32 run(bool verbose, i32* program, size_t program_size) {
+	print_debug(verbose, " Beginning program...\n");
 	if(data_mem_size == 0) data_mem_size = 128; // if user overwrites data_mem_size with `#0;` forcefully replace it wiht 128
 
 	// reserved memory space for program and data
-	printf("[DEBUG] Allocating memory space, size: %zu\n", sizeof(i32) * (program_size + data_mem_size));
+	print_debug(verbose, " Allocating memory space, size: %zu\n", sizeof(i32) * (program_size + data_mem_size));
 	i32* mem_space = (i32*)malloc(sizeof(i32) * (program_size + data_mem_size));
 	if(mem_space == NULL) {
 		interpreter_err_msg = "Failed to allocate interpreter memory";
@@ -73,7 +73,7 @@ i32 run(i32* program, size_t program_size) {
 	
 	size_t total_memory_size = program_size + data_mem_size;
 
-	printf("[DEBUG] Initializing variable table, program counter, and data pointer...\n");
+	print_debug(verbose, " Initializing variable table, program counter, and data pointer...\n");
 	// program counter
 	i32* prog_ptr = mem_space;
 	// points to somewhere in data

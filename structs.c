@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "structs.h"
+#include "debug.h"
 
 void put(Map* map, i32 key, i32 value, i32 position) {
 	map->pairs = realloc(map->pairs, sizeof(MapElement) * (map->size + 1));
@@ -14,7 +15,7 @@ MapElement* get(Map* map, i32 key) {
 			return &map->pairs[i];
 		}
 	}
-	printf("[WARNING] `get()` failed to find value referenced by %d.\n  Adding placeholder: { %d : (0, 0) }\n", key, key);
+	print_warning(" `get()` failed to find value referenced by %d.\n  Adding placeholder: { %d : (0, 0) }\n", key, key);
 	put(map, key, 0, 0);
 	return 0;
 }
@@ -54,7 +55,7 @@ bool is_varstack_full(StackVariable* stack) {
 
 Variable* pop_varstack(StackVariable* stack) {
 	if(is_varstack_empty(stack)) {
-		printf("[ERROR] Stack underflow.\n");
+		print_error(" Stack underflow.\n");
 		return NULL;
 	}
 	stack->top -= 1;
@@ -63,7 +64,7 @@ Variable* pop_varstack(StackVariable* stack) {
 
 Variable* peek_varstack(StackVariable* stack) {
 	if(is_varstack_empty(stack)) {
-		printf("[ERROR] Stack is empty");
+		print_error(" Stack is empty");
 		return NULL;
 	}
 	return stack->stack[stack->top];
@@ -71,7 +72,7 @@ Variable* peek_varstack(StackVariable* stack) {
 
 void push_varstack(StackVariable* stack, Variable* value) {
 	if(is_varstack_full(stack)) {
-		printf("[ERROR] Stack overflow.\n");
+		print_error(" Stack overflow.\n");
 		return;
 	}
 	stack->top += 1;
@@ -95,7 +96,7 @@ bool is_full(Stacki32* stack) {
 
 i32 pop(Stacki32* stack) {
 	if(is_empty(stack)) {
-		printf("[ERROR] Stack underflow.\n");
+		print_error(" Stack underflow.\n");
 		return -1;
 	}
 	stack->top -= 1;
@@ -104,7 +105,7 @@ i32 pop(Stacki32* stack) {
 
 i32 peek(Stacki32* stack) {
 	if(is_empty(stack)) {
-		printf("[ERROR] Stack is empty");
+		print_error(" Stack is empty");
 		return 0;
 	}
 	return stack->stack[stack->top];
@@ -112,7 +113,7 @@ i32 peek(Stacki32* stack) {
 
 void push(Stacki32* stack, i32 value) {
 	if(is_full(stack)) {
-		printf("[ERROR] Stack overflow.\n");
+		print_error(" Stack overflow.\n");
 		return;
 	}
 	stack->top += 1;
