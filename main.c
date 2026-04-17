@@ -66,11 +66,11 @@ i32 main(int argc, char** argv) {
 	if(argc == 1) {
 		print_debug(verbose, " No flags passed in.");
 	} else {
-		print_debug(verbose, " Flags:\n  Verbose? %d\n  Input file? %d Name: %s\n  Export binary? %d Name: %s\n", 
-		       verbose, 
-		       use_existing_file, 
+		print_debug(verbose, " Flags:\n  Verbose? %s\n  Input file? %s\n    Name: %s\n  Export binary? %s\n    Name: %s\n", 
+		       verbose ? "true" : "false", 
+		       use_existing_file ? "true" : "false", 
 		       name_of_input_file ? name_of_input_file : "(none)",
-		       export_binary, 
+		       export_binary ? "true" : "false", 
 		       name_of_output_file ? name_of_output_file : "(none)");
 	}
 
