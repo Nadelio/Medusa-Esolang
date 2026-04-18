@@ -1,0 +1,18 @@
+#64;
+
+// Keep the saved pointer away from the first bytes of D memory.
+C10 = &D;
+
+// single-character literals
+%'S'; %'u'; %'g'; %'a'; %'r'; %%10;
+
+// print-string sugar
+%"Hello from Medusa\n";
+
+// write-string-to-memory sugar
+D = "OK";
+D : C10;
+%D;
+-> D;
+%D;
+%%10;

@@ -39,6 +39,176 @@ typedef struct {
 	size_t capacity;
 } TokenList;
 
+static bool is_identifier_character(char ch) {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+static bool is_whitespace_character(char ch) {
+	return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+static void append_source_char(char** buffer, size_t* length, size_t* capacity, char ch) {
+	if(*length + 2 >= *capacity) {
+		size_t new_capacity = *capacity == 0 ? 64 : *capacity;
+		while(*length + 2 >= new_capacity) {
+			new_capacity *= 2;
+		}
+
+		char* resized = realloc(*buffer, sizeof(char) * new_capacity);
+		if(resized == NULL) {
+			fprintf(stderr, "[ERROR] Failed to grow expanded source buffer\n");
+			exit(1);
+		}
+
+		*buffer = resized;
+		*capacity = new_capacity;
+	}
+
+	(*buffer)[(*length)++] = ch;
+	(*buffer)[*length] = '\0';
+}
+
+static void append_source_text(char** buffer, size_t* length, size_t* capacity, const char* text) {
+	for(size_t i = 0; text[i] != '\0'; i++) {
+		append_source_char(buffer, length, capacity, text[i]);
+	}
+}
+
+static void append_source_int(char** buffer, size_t* length, size_t* capacity, i32 value) {
+	char number[32];
+	snprintf(number, sizeof(number), "%d", value);
+	append_source_text(buffer, length, capacity, number);
+}
+
+static bool read_escaped_character(const char* source, size_t code_len, size_t* index, char* out_char) {
+	if(*index >= code_len) return false;
+
+	char ch = source[(*index)++];
+	if(ch != '\\') {
+		*out_char = ch;
+		return true;
+	}
+
+	if(*index >= code_len) return false;
+
+	char escape = source[(*index)++];
+	switch(escape) {
+		case 'n': *out_char = '\n'; break;
+		case 'r': *out_char = '\r'; break;
+		case 't': *out_char = '\t'; break;
+		case '0': *out_char = '\0'; break;
+		case '\\': *out_char = '\\'; break;
+		case '\'': *out_char = '\''; break;
+		case '"': *out_char = '"'; break;
+		default: *out_char = escape; break;
+	}
+
+	return true;
+}
+
+static char* expand_syntax_sugar(const char* source, size_t code_len, size_t* expanded_len) {
+	size_t capacity = code_len > 0 ? (code_len * 4) + 64 : 64;
+	char* expanded = malloc(sizeof(char) * capacity);
+	if(expanded == NULL) {
+		fprintf(stderr, "[ERROR] Failed to allocate expanded source buffer\n");
+		exit(1);
+	}
+
+	size_t length = 0;
+	expanded[0] = '\0';
+
+	for(size_t i = 0; i < code_len;) {
+		if(source[i] == '/' && i + 1 < code_len && source[i + 1] == '/') {
+			while(i < code_len) {
+				char ch = source[i++];
+				append_source_char(&expanded, &length, &capacity, ch);
+				if(ch == '\n') break;
+			}
+			continue;
+		}
+
+		if(source[i] == 'D'
+			&& (i == 0 || !is_identifier_character(source[i - 1]))
+			&& (i + 1 >= code_len || !is_identifier_character(source[i + 1]))) {
+			size_t lookahead = i + 1;
+			while(lookahead < code_len && is_whitespace_character(source[lookahead])) {
+				lookahead++;
+			}
+
+			if(lookahead < code_len && source[lookahead] == '=') {
+				lookahead++;
+				while(lookahead < code_len && is_whitespace_character(source[lookahead])) {
+					lookahead++;
+				}
+
+				if(lookahead < code_len && source[lookahead] == '"') {
+					lookahead++;
+					while(lookahead < code_len && source[lookahead] != '"') {
+						char decoded = 0;
+						if(!read_escaped_character(source, code_len, &lookahead, &decoded)) {
+							break;
+						}
+						append_source_text(&expanded, &length, &capacity, "D = ");
+						append_source_int(&expanded, &length, &capacity, (unsigned char)decoded);
+						append_source_text(&expanded, &length, &capacity, "; -> D; ");
+					}
+
+					if(lookahead < code_len && source[lookahead] == '"') {
+						size_t next_index = lookahead + 1;
+						while(next_index < code_len && is_whitespace_character(source[next_index])) {
+							next_index++;
+						}
+						i = (next_index < code_len && source[next_index] == ';') ? next_index + 1 : lookahead + 1;
+						continue;
+					}
+				}
+			}
+		}
+
+		if(source[i] == '%') {
+			size_t lookahead = i + 1;
+			while(lookahead < code_len && is_whitespace_character(source[lookahead])) {
+				lookahead++;
+			}
+
+			if(lookahead < code_len && source[lookahead] == '"') {
+				lookahead++;
+				while(lookahead < code_len && source[lookahead] != '"') {
+					char decoded = 0;
+					if(!read_escaped_character(source, code_len, &lookahead, &decoded)) {
+						break;
+					}
+					append_source_char(&expanded, &length, &capacity, '%');
+					append_source_int(&expanded, &length, &capacity, (unsigned char)decoded);
+					append_source_text(&expanded, &length, &capacity, "; ");
+				}
+
+				if(lookahead < code_len && source[lookahead] == '"') {
+					i = lookahead + 1;
+					continue;
+				}
+			}
+		}
+
+		if(source[i] == '\'') {
+			size_t lookahead = i + 1;
+			char decoded = 0;
+			if(read_escaped_character(source, code_len, &lookahead, &decoded)
+				&& lookahead < code_len && source[lookahead] == '\'') {
+				append_source_int(&expanded, &length, &capacity, (unsigned char)decoded);
+				i = lookahead + 1;
+				continue;
+			}
+		}
+
+		append_source_char(&expanded, &length, &capacity, source[i]);
+		i++;
+	}
+
+	*expanded_len = length;
+	return expanded;
+}
+
 static void reserve_label_table(LabelTable* table, size_t additional) {
 	size_t required = table->count + additional;
 	if(required <= table->capacity) return;
@@ -618,6 +788,13 @@ i32* parse(bool verbose, FILE* source_file) {
 	}
 
 	source_code[code_len] = '\0'; // null terminate
+
+	size_t expanded_len = 0;
+	char* expanded_source = expand_syntax_sugar(source_code, code_len, &expanded_len);
+	free(source_code);
+	source_code = expanded_source;
+	code_len = expanded_len;
+
 	print_debug(verbose, " Source code:\n%s\n", source_code);
 
 	size_t compiled_capacity = code_len > 0 ? code_len * 4 : 64;

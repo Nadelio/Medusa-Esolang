@@ -10,7 +10,10 @@ Although there it isn't very strongly supported, you just *can* do it.
 The parser compiles from infix to prefix using shunting yard.\
 Then the interpreter is a stack machine.
 
-Anyways, here are the different instructions:
+![Hello World Example](assets/hello_world.png)
+![Self-modifying Code Example](assets/modify.png)
+![Generic Syntax Example](assets/syntax_demo.png)
+
 ## Meta Instructions
 `#128` - Allocate 128 bytes for data space (only valid at the very beginning of a program)
 
@@ -59,9 +62,14 @@ Anyways, here are the different instructions:
 ## Miscellaneous Instructions
 `% ...` - print the following integer as an ascii character\
 `%% ...` - print the following integer\
-`// ...` - comments (these are stripped from the final compiled program, obviously)
+`// ...` - comments (these are stripped from the final compiled program, obviously)\
+`'a'` - a single character (syntax sugar, compiles to an `I...` instruction)\
+`%"..."` - prints a string (syntax sugar, compiles to repeated `%I...` instructions)\
+`D = "..."` - writes a string to memory starting at where the data pointer is currently (syntax sugar, compiles to repeated `D = I...; -> D;` instructions)
 
 > [!note]
+> - `%D` prints the value currently under the data pointer.
+> - `*D` dereferences the address stored in the current data cell.
 > - Integers compile to TWO bytecode instructions `I` and then the integer.
 > - The interpreter is a stack machine.
 > - The compiler/parser converts infix expressions to postfix.
