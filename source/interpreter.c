@@ -7,13 +7,19 @@
 char* interpreter_err_msg;
 size_t data_mem_size = 128;
 
-static MapElement* find_or_create_var(Map* map, i32 key) {
+static MapElement* find_or_create_var(Map* map, i32 key, size_t program_size, size_t total_memory_size) {
 	for(size_t i = 0; i < map->size; i++) {
 		if(map->pairs[i].key == key) {
 			return &map->pairs[i];
 		}
 	}
-	put(map, key, 0, key < 0 ? 0 : key);
+
+	i32 default_position = (i32)program_size + (key < 0 ? 0 : key);
+	if(default_position < 0 || (size_t)default_position >= total_memory_size) {
+		default_position = (i32)program_size;
+	}
+
+	put(map, key, 0, default_position);
 	return &map->pairs[map->size - 1];
 }
 
@@ -45,18 +51,18 @@ static void clear_runtime_stack(StackVariable* stack) {
 	}
 }
 
-static i32 read_data_cell(i32* data_base, i32 address) {
-	if(address < 0 || (size_t)address >= data_mem_size) {
+static i32 read_memory_cell(i32* mem_space, size_t total_memory_size, i32 address) {
+	if(address < 0 || (size_t)address >= total_memory_size) {
 		return 0;
 	}
-	return data_base[address];
+	return mem_space[address];
 }
 
-static void write_data_cell(i32* data_base, i32 address, i32 value) {
-	if(address < 0 || (size_t)address >= data_mem_size) {
+static void write_memory_cell(i32* mem_space, size_t total_memory_size, i32 address, i32 value) {
+	if(address < 0 || (size_t)address >= total_memory_size) {
 		return;
 	}
-	data_base[address] = value;
+	mem_space[address] = value;
 }
 
 i32 run(bool verbose, i32* program, size_t program_size) {
@@ -76,7 +82,7 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 	print_debug(verbose, " Initializing variable table, program counter, and data pointer...\n");
 	// program counter
 	i32* prog_ptr = mem_space;
-	// points to somewhere in data
+	// starts at the data section, addresses start at 0
 	i32* data_ptr = mem_space + program_size;
 	// variable table for interpreter
 	Map* vtable = (Map*)malloc(sizeof(Map));
@@ -91,7 +97,6 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 	vtable->pairs = NULL;
 
 	StackVariable* value_stack = build_varstack();
-	i32* data_base = data_ptr;
 	i32* scope_starts[64] = {0};
 	int scope_remaining[64] = {0};
 	bool scope_is_infinite[64] = {false};
@@ -112,16 +117,16 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 				break;
 			case VARIABLE: {
 				i32 ident = *(prog_ptr + 1);
-				MapElement* slot = find_or_create_var(vtable, ident);
-				if(slot->position >= 0 && (size_t)slot->position < data_mem_size) {
-					slot->value = read_data_cell(data_base, slot->position);
+				MapElement* slot = find_or_create_var(vtable, ident, program_size, total_memory_size);
+				if(slot->position >= 0 && (size_t)slot->position < total_memory_size) {
+					slot->value = read_memory_cell(mem_space, total_memory_size, slot->position);
 				}
 				push_runtime_value(value_stack, (Variable){ .value = slot->value, .indent = ident, .address = slot->position, .is_literal = false });
 				prog_ptr += 1;
 				break;
 			}
 			case DATA_PTR_REF:
-				push_runtime_value(value_stack, (Variable){ .value = *data_ptr, .indent = DATA_PTR_REF, .address = (i32)(data_ptr - data_base), .is_literal = false });
+				push_runtime_value(value_stack, (Variable){ .value = *data_ptr, .indent = DATA_PTR_REF, .address = (i32)(data_ptr - mem_space), .is_literal = false });
 				break;
 			case PROG_PTR_REF:
 				push_runtime_value(value_stack, (Variable){ .value = *prog_ptr, .indent = PROG_PTR_REF, .address = (i32)(prog_ptr - mem_space), .is_literal = false });
@@ -138,10 +143,10 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 				} else if(left.indent == PROG_PTR_REF) {
 					*prog_ptr = right.value;
 				} else if(!left.is_literal) {
-					MapElement* slot = find_or_create_var(vtable, left.indent);
+					MapElement* slot = find_or_create_var(vtable, left.indent, program_size, total_memory_size);
 					slot->value = right.value;
 					slot->position = left.address;
-					write_data_cell(data_base, slot->position, right.value);
+					write_memory_cell(mem_space, total_memory_size, slot->position, right.value);
 				}
 				break;
 			}
@@ -149,15 +154,15 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 				Variable right = pop_runtime_value(value_stack);
 				Variable left = pop_runtime_value(value_stack);
 				if(left.indent == DATA_PTR_REF) {
-					if(right.value >= 0 && (size_t)right.value < data_mem_size) {
-						data_ptr = data_base + right.value;
+					if(right.value >= 0 && (size_t)right.value < total_memory_size) {
+						data_ptr = mem_space + right.value;
 					}
 				} else if(left.indent == PROG_PTR_REF) {
 					if(right.value >= 0 && (size_t)right.value < program_size) {
 						prog_ptr = mem_space + right.value - 1;
 					}
 				} else if(!left.is_literal) {
-					MapElement* slot = find_or_create_var(vtable, left.indent);
+					MapElement* slot = find_or_create_var(vtable, left.indent, program_size, total_memory_size);
 					slot->position = right.value;
 				}
 				break;
@@ -169,7 +174,7 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 			}
 			case DEREF: {
 				Variable target = pop_runtime_value(value_stack);
-				i32 value = read_data_cell(data_base, target.value);
+				i32 value = read_memory_cell(mem_space, total_memory_size, target.value);
 				push_runtime_value(value_stack, (Variable){ .value = value, .indent = -1, .address = -1, .is_literal = true });
 				break;
 			}
@@ -211,9 +216,9 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 				} else if(target.indent == PROG_PTR_REF) {
 					*prog_ptr += delta;
 				} else if(!target.is_literal) {
-					MapElement* slot = find_or_create_var(vtable, target.indent);
+					MapElement* slot = find_or_create_var(vtable, target.indent, program_size, total_memory_size);
 					slot->value += delta;
-					write_data_cell(data_base, slot->position, slot->value);
+					write_memory_cell(mem_space, total_memory_size, slot->position, slot->value);
 				}
 				break;
 			}
@@ -222,14 +227,14 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 				Variable target = pop_runtime_value(value_stack);
 				i32 delta = *prog_ptr == RIGHT_ARROW ? 1 : -1;
 				if(target.indent == DATA_PTR_REF) {
-					i32 new_address = (i32)(data_ptr - data_base) + delta;
-					if(new_address >= 0 && (size_t)new_address < data_mem_size) {
-						data_ptr = data_base + new_address;
+					i32 new_address = (i32)(data_ptr - mem_space) + delta;
+					if(new_address >= 0 && (size_t)new_address < total_memory_size) {
+						data_ptr = mem_space + new_address;
 					}
 				} else if(target.indent == PROG_PTR_REF) {
 					prog_ptr += delta;
 				} else if(!target.is_literal) {
-					MapElement* slot = find_or_create_var(vtable, target.indent);
+					MapElement* slot = find_or_create_var(vtable, target.indent, program_size, total_memory_size);
 					slot->position += delta;
 				}
 				break;
@@ -304,9 +309,9 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 				Variable target = pop_runtime_value(value_stack);
 				i32 value = target.value;
 				if(!target.is_literal && target.indent != DATA_PTR_REF && target.indent != PROG_PTR_REF) {
-					MapElement* slot = find_or_create_var(vtable, target.indent);
-					if(slot->position >= 0 && (size_t)slot->position < data_mem_size) {
-						slot->value = read_data_cell(data_base, slot->position);
+					MapElement* slot = find_or_create_var(vtable, target.indent, program_size, total_memory_size);
+					if(slot->position >= 0 && (size_t)slot->position < total_memory_size) {
+						slot->value = read_memory_cell(mem_space, total_memory_size, slot->position);
 					}
 					value = slot->value;
 				}
@@ -317,9 +322,9 @@ i32 run(bool verbose, i32* program, size_t program_size) {
 				Variable target = pop_runtime_value(value_stack);
 				i32 value = target.value;
 				if(!target.is_literal && target.indent != DATA_PTR_REF && target.indent != PROG_PTR_REF) {
-					MapElement* slot = find_or_create_var(vtable, target.indent);
-					if(slot->position >= 0 && (size_t)slot->position < data_mem_size) {
-						slot->value = read_data_cell(data_base, slot->position);
+					MapElement* slot = find_or_create_var(vtable, target.indent, program_size, total_memory_size);
+					if(slot->position >= 0 && (size_t)slot->position < total_memory_size) {
+						slot->value = read_memory_cell(mem_space, total_memory_size, slot->position);
 					}
 					value = slot->value;
 				}

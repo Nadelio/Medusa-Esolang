@@ -64,7 +64,8 @@ Anyways, here are the different instructions:
 > - Integers compile to TWO bytecode instructions `I` and then the integer.
 > - The interpreter is a stack machine.
 > - The compiler/parser converts infix expressions to postfix.
-
+> - Variables are automatically created immediately after the program data ends in memory
+> - Addresses begin at the start of program data
 
 ## Turing Completeness
 

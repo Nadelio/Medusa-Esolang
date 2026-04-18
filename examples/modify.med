@@ -1,0 +1,19 @@
+#128;
+
+C0 = 10;
+
+// point C1 at the operator inside the `mutate` label
+// `C0 = C0 + 5;` compiles as: `C0 C0 I5 + =`
+// so the `+` opcode lives 6 cells after the label
+C1 : mutate + 6;
+
+loop:
+mutate:
+    C0 = C0 + 5;
+    %%C0;
+    %10; // newline
+
+    // PLUS = 12 and MINUS = 14, so this flips the opcode in place.
+    C1 = 26 - C1;
+
+    P : loop;
