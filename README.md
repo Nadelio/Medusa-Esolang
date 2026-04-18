@@ -58,7 +58,7 @@ Anyways, here are the different instructions:
 
 ## Miscellaneous Instructions
 `% ...` - print the following integer as an ascii character\
-`%% ...` - print the following integer
+`%% ...` - print the following integer\
 `// ...` - comments (these are stripped from the final compiled program, obviously)
 
 > [!note]
