@@ -6,12 +6,15 @@
 #include <stdbool.h>
 
 typedef char* string;
-typedef int32_t i32;
+typedef int8_t i8;
+typedef uint8_t u8;
+// one memory cell, every address refers to a cell
+typedef int32_t cell;
 
 typedef struct {
-	i32 key;
-	i32 value;
-	i32 position;
+	cell key;
+	cell value;
+	ptrdiff_t position;
 } MapElement;
 
 typedef struct {
@@ -19,14 +22,14 @@ typedef struct {
 	MapElement* pairs;
 } Map;
 
-void put(Map* map, i32 key, i32 value, i32 position);
-MapElement* get(Map* map, i32 key);
-void set(Map* map, i32 indent, i32 value, i32 address);
+void put(Map* map, cell key, cell value, ptrdiff_t position);
+MapElement* get(Map* map, cell key);
+void set(Map* map, cell indent, cell value, ptrdiff_t address);
 
 typedef struct {
-	i32 value;
-	i32 indent;
-	i32 address;
+	i8 value;
+	i8 indent;
+	ptrdiff_t address;
 	bool is_literal;
 } Variable;
 
@@ -45,18 +48,18 @@ Variable* peek_varstack(StackVariable* stack);
 void push_varstack(StackVariable* stack, Variable* value);
 
 typedef struct {
-	i32 stack[64];
+	i8 stack[64];
 	int top;
 	size_t size;
-} Stacki32;
+} Stacki8;
 
-Stacki32* build(void);
-bool is_empty(Stacki32* stack);
-bool is_full(Stacki32* stack);
-i32 pop(Stacki32* stack);
-i32 peek(Stacki32* stack);
-void push(Stacki32* stack, i32 value);
+Stacki8* build(void);
+bool is_empty(Stacki8* stack);
+bool is_full(Stacki8* stack);
+i8 pop(Stacki8* stack);
+i8 peek(Stacki8* stack);
+void push(Stacki8* stack, i8 value);
 
-bool is_out_of_bounds(i32* ptr, i32* lower_bound, i32* upper_bound);
+bool is_out_of_bounds(i8* ptr, i8* lower_bound, i8* upper_bound);
 
 #endif

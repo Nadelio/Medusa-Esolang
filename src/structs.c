@@ -3,13 +3,13 @@
 #include "../include/structs.h"
 #include "../include/debug.h"
 
-void put(Map* map, i32 key, i32 value, i32 position) {
+void put(Map* map, cell key, cell value, ptrdiff_t position) {
 	map->pairs = realloc(map->pairs, sizeof(MapElement) * (map->size + 1));
 	map->pairs[map->size] = (MapElement){ .key = key, .value = value, .position = position };
 	map->size = map->size + 1;
 }
 
-MapElement* get(Map* map, i32 key) {
+MapElement* get(Map* map, cell key) {
 	for(size_t i = 0; i < map->size; i++) {
 		if(map->pairs[i].key == key) {
 			return &map->pairs[i];
@@ -20,7 +20,7 @@ MapElement* get(Map* map, i32 key) {
 	return 0;
 }
 
-void set(Map* map, i32 indent, i32 value, i32 address) {
+void set(Map* map, cell indent, cell value, ptrdiff_t address) {
 	for(size_t i = 0; i < map->size; i++) {
 		if(map->pairs[i].key == indent) {
 			map->pairs[i].value = value;
@@ -79,22 +79,22 @@ void push_varstack(StackVariable* stack, Variable* value) {
 	stack->stack[stack->top] = value;
 }
 
-Stacki32* build(void) {
-	Stacki32* stack = (Stacki32*)malloc(sizeof(Stacki32));
+Stacki8* build(void) {
+	Stacki8* stack = (Stacki8*)malloc(sizeof(Stacki8));
 	stack->top = -1;
 	stack->size = 64;
 	return stack;
 }
 
-bool is_empty(Stacki32* stack) {
+bool is_empty(Stacki8* stack) {
 	return stack->top == -1;
 }
 
-bool is_full(Stacki32* stack) {
+bool is_full(Stacki8* stack) {
 	return (size_t)(stack->top + 1) >= stack->size;
 }
 
-i32 pop(Stacki32* stack) {
+i8 pop(Stacki8* stack) {
 	if(is_empty(stack)) {
 		print_error(" Stack underflow.\n");
 		return -1;
@@ -103,7 +103,7 @@ i32 pop(Stacki32* stack) {
 	return stack->stack[stack->top + 1];
 }
 
-i32 peek(Stacki32* stack) {
+i8 peek(Stacki8* stack) {
 	if(is_empty(stack)) {
 		print_error(" Stack is empty");
 		return 0;
@@ -111,7 +111,7 @@ i32 peek(Stacki32* stack) {
 	return stack->stack[stack->top];
 }
 
-void push(Stacki32* stack, i32 value) {
+void push(Stacki8* stack, i8 value) {
 	if(is_full(stack)) {
 		print_error(" Stack overflow.\n");
 		return;
@@ -120,7 +120,7 @@ void push(Stacki32* stack, i32 value) {
 	stack->stack[stack->top] = value;
 }
 
-bool is_out_of_bounds(i32* ptr, i32* lower_bound, i32* upper_bound) {
+bool is_out_of_bounds(i8* ptr, i8* lower_bound, i8* upper_bound) {
 	if(ptr < lower_bound || ptr >= upper_bound) {
 		return true;
 	}

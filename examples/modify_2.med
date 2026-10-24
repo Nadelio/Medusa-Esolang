@@ -1,0 +1,62 @@
+#128;
+
+// Accumulator
+C0 = 10;
+
+// `C0 = C0 + 1;` occupies these cells relative to `worker`:
+//   0: push C   1: 0   2: push I   3: 1   4: ADD   5: set C   6: 0   7: EOS
+// Addresses count decoded 32-bit cells, not bytes in the exported binary.
+C10 : worker + 3;
+C11 : worker + 4;
+
+// `P : multiply;` is `push I, address, set P, EOS`.
+// Rewriting its literal changes where the SAME jump instruction goes next.
+C12 : dispatch + 1;
+
+// Reading these variables reads program cells; assigning them patches those cells.
+C1 = C10;
+C2 = C11;
+
+@"Self-modifying calculator\n";
+@"Pass 1: original code, 10 + 1 = ";
+P : worker;
+
+multiply:
+    // Replace the embedded constant and change ADD (9) into MUL (11).
+    C10 = 3;
+    C11 = 11;
+    C12 = xor_pass;
+    @"Pass 2: patched literal and opcode, 11 * 3 = ";
+    P : worker;
+
+xor_pass:
+    // 255 fits in one memory cell even though it needs two signed bytes on disk.
+    // This changes the arithmetic into a bitwise instruction: XOR = 22.
+    C10 = 255;
+    C11 = 22;
+    C12 = restore;
+    @"Pass 3: patched again, 33 ^ 255 = ";
+    P : worker;
+
+restore:
+    // Restore the arithmetic from saved program cells, not hard-coded values.
+    C10 = C1;
+    C11 = C2;
+    C12 = done;
+    @"Pass 4: restored original arithmetic, 222 + 1 = ";
+    P : worker;
+
+worker:
+    // This statement executes four times, but its literal and operator change.
+    C0 = C0 + 1;
+    @@C0;
+    @'\n';
+
+dispatch:
+    // Initially goes to multiply; later goes to xor_pass, restore, then done.
+    P : multiply;
+
+done:
+    @"Final accumulator: "; @@C0; @'\n';
+    @"Restored worker: literal="; @@C10;
+    @", opcode="; @@C11; @" (ADD)\n";

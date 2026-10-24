@@ -4,10 +4,11 @@
 #include <string.h>
 #include "../include/structs.h"
 #include "../include/parser.h"
+#include "../include/bytecode.h"
 
-static void print_compiled_program(const i32* program, size_t program_len);
+static void print_compiled_program(const u8* program, size_t program_len);
 
-i32 main(int argc, char** argv) {
+int main(int argc, char** argv) {
 	const char* help_message = "--help              | -h      : print the help message\n--verbose           | -v      : verbose information about parser and runtime states\n--export            | -x       : export the binary for the program\n--input <filename>  | -f <filename> : use the following file as a program\n--output <filename> | -o <filename> : define the name for the exported program (defaults to program.bin)\n";
 
 	bool verbose = false;
@@ -89,15 +90,10 @@ i32 main(int argc, char** argv) {
 		
 		print_debug(verbose, " Parsing %s...\n", name_of_input_file);
 
-		i32* compiled_program = parse(verbose, source_file);
-		
 		size_t program_len = 0;
-		while(compiled_program[program_len] != EOD) {
-			program_len++;
-		}
-		program_len++;
+		u8* compiled_program = parse(verbose, source_file, &program_len);
 
-		print_debug(verbose, " Compiled program (modified slightly for readability):\n");
+		print_debug(verbose, " Compiled program, %zu bytes (modified slightly for readability):\n", program_len);
 		if(verbose) {
 			print_compiled_program(compiled_program, program_len);
 		}
@@ -109,7 +105,7 @@ i32 main(int argc, char** argv) {
 			if(name_of_output_file == NULL) name_of_output_file = "a.bin";
 
 			FILE* exported_file;
-			errno_t export_errors = fopen_s(&exported_file, name_of_output_file, "w");
+			errno_t export_errors = fopen_s(&exported_file, name_of_output_file, "wb");
 			if(export_errors != 0) {
 				char err_buf[128];
 				strerror_s(err_buf, sizeof(err_buf), export_errors);
@@ -117,13 +113,16 @@ i32 main(int argc, char** argv) {
 				return 1;
 			}
 		
-			fwrite(compiled_program, sizeof(i32), program_len, exported_file);
+			fwrite(compiled_program, sizeof(u8), program_len, exported_file);
 			fclose(exported_file);
 			print_debug(verbose, " Successfully exported program to %s.\n", name_of_output_file);
 		}
 
-		i32 status = run(verbose, compiled_program, program_len);
+		int status = run(verbose, compiled_program, program_len);
 		print_debug(verbose, " Runtime status: %d\n", status);
+		if(status != SUCCESS && interpreter_err_msg != NULL) {
+			print_error(" %s\n", interpreter_err_msg);
+		}
 
 		if(name_of_input_file) free(name_of_input_file);
 		if(name_of_output_file) free(name_of_output_file);
@@ -136,65 +135,14 @@ i32 main(int argc, char** argv) {
 	return 0;
 }
 
-static void print_compiled_program(const i32* program, size_t program_len) {
-	for(size_t i = 0; i < program_len; i++) {
-		switch(program[i]) {
-			case EOS:
-				printf(";\n");
-				break;
-			case EOD:
-				printf("\nEOD\n");
-				break;
-			case VARIABLE:
-				if(i + 1 < program_len) {
-					printf("C%d ", program[++i]);
-				} else {
-					printf("C? ");
-				}
-				break;
-			case PROG_PTR_REF:
-				printf("P ");
-				break;
-			case DATA_PTR_REF:
-				printf("D ");
-				break;
-			case INT_LITERAL:
-				if(i + 1 < program_len) {
-					printf("I%d ", program[++i]);
-				} else {
-					printf("I? ");
-				}
-				break;
-			case ASSIGN: printf("= "); break;
-			case ADDRESS_ASSIGN: printf(": "); break;
-			case DECLARE_REF: printf("& "); break;
-			case DEREF: printf("* "); break;
-			case MULTI: printf("mul "); break;
-			case DIV: printf("/ "); break;
-			case PLUS: printf("+ "); break;
-			case INC: printf("++ "); break;
-			case MINUS: printf("- "); break;
-			case DEC: printf("-- "); break;
-			case EQUIV: printf("== "); break;
-			case NOT_EQUIV: printf("!= "); break;
-			case LESS: printf("< "); break;
-			case GREATER: printf("> "); break;
-			case LESS_EQUAL: printf("<= "); break;
-			case GREATER_EQUAL: printf(">= "); break;
-			case RIGHT_ARROW: printf("-> "); break;
-			case LEFT_ARROW: printf("<- "); break;
-			case BEGIN_SCOPE: printf("[ "); break;
-			case END_SCOPE: printf("] "); break;
-			case DEFINE_SCOPE_ITERATIONS: printf("$ "); break;
-			case BREAK_FROM_SCOPE: printf("^ "); break;
-			case INFINITE_LOOP: printf("~ "); break;
-			case PRINT: printf("%% "); break;
-			case PRINT_LITERAL: printf("%%%% "); break;
-			case DEFINE_DATA_MEM_SIZE: printf("# "); break;
-			default:
-				printf("%d ", program[i]);
-				break;
-		}
+static void print_compiled_program(const u8* program, size_t program_len) {
+	size_t cell_count = 0;
+	size_t mem_size = 0;
+	cell* cells = bc_decode(program, program_len, &cell_count, &mem_size);
+	if(cells == NULL) {
+		print_error(" Compiled program is malformed\n");
+		return;
 	}
-	printf("\n");
+	bc_print(cells, cell_count);
+	free(cells);
 }

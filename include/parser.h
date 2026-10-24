@@ -13,12 +13,17 @@ enum TokenValues {
 	VARIABLE,
 	DATA_PTR_REF,
 	PROG_PTR_REF,
-	ASSIGN,
+	VALUE_ASSIGN,
 	ADDRESS_ASSIGN,
-	DECLARE_REF,
-	DEREF,
+	READ_ADDRESS,
+	DEREFERENCE,
 	MULTI,
 	DIV,
+	MODULO,
+	BIT_AND,
+	BIT_OR,
+	BIT_XOR,
+	BIT_NOT,
 	PLUS,
 	INC,
 	MINUS,
@@ -54,7 +59,8 @@ enum STATUS {
 extern char* interpreter_err_msg;
 extern size_t data_mem_size;
 
-i32* parse(bool verbose, FILE* source_file);
-i32 run(bool verbose, i32* program, size_t program_size);
+// compiles src code into bytecode, `out_len` receives the byte count
+u8* parse(bool verbose, FILE* source_file, size_t* out_len);
+int run(bool verbose, const u8* bytecode, size_t bytecode_len);
 
 #endif

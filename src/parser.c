@@ -3,17 +3,20 @@
 #include <stdbool.h>
 #include <string.h>
 #include "../include/parser.h"
+#include "../include/bytecode.h"
 
 typedef struct {
-	i32 type;
-	i32 value;
+	int type;
+	cell value;
 	bool has_value;
+	// for operands, how the instruction accesses them (one of `enum Access`)
+	int access;
 	char text[64];
 } ParsedToken;
 
 typedef struct {
 	char name[64];
-	i32 address;
+	cell address;
 } LabelEntry;
 
 typedef struct {
@@ -74,7 +77,7 @@ static void append_source_text(char** buffer, size_t* length, size_t* capacity, 
 	}
 }
 
-static void append_source_int(char** buffer, size_t* length, size_t* capacity, i32 value) {
+static void append_source_int(char** buffer, size_t* length, size_t* capacity, int value) {
 	char number[32];
 	snprintf(number, sizeof(number), "%d", value);
 	append_source_text(buffer, length, capacity, number);
@@ -165,7 +168,7 @@ static char* expand_syntax_sugar(const char* source, size_t code_len, size_t* ex
 			}
 		}
 
-		if(source[i] == '%') {
+		if(source[i] == '@') {
 			size_t lookahead = i + 1;
 			while(lookahead < code_len && is_whitespace_character(source[lookahead])) {
 				lookahead++;
@@ -178,7 +181,7 @@ static char* expand_syntax_sugar(const char* source, size_t code_len, size_t* ex
 					if(!read_escaped_character(source, code_len, &lookahead, &decoded)) {
 						break;
 					}
-					append_source_char(&expanded, &length, &capacity, '%');
+					append_source_char(&expanded, &length, &capacity, '@');
 					append_source_int(&expanded, &length, &capacity, (unsigned char)decoded);
 					append_source_text(&expanded, &length, &capacity, "; ");
 				}
@@ -247,16 +250,17 @@ static void reserve_pending_labels(PendingLabelTable* table, size_t additional) 
 	table->capacity = new_capacity;
 }
 
-static i32 find_label_address(const LabelTable* table, const char* name) {
+static bool find_label_address(const LabelTable* table, const char* name, cell* out_address) {
 	for(size_t i = 0; i < table->count; i++) {
 		if(strcmp(table->items[i].name, name) == 0) {
-			return table->items[i].address;
+			*out_address = table->items[i].address;
+			return true;
 		}
 	}
-	return -1;
+	return false;
 }
 
-static void set_label_address(LabelTable* table, const char* name, i32 address) {
+static void set_label_address(LabelTable* table, const char* name, cell address) {
 	for(size_t i = 0; i < table->count; i++) {
 		if(strcmp(table->items[i].name, name) == 0) {
 			table->items[i].address = address;
@@ -279,10 +283,10 @@ static void add_pending_label(PendingLabelTable* table, const char* name, size_t
 	table->count++;
 }
 
-static void resolve_pending_labels(const LabelTable* labels, PendingLabelTable* pending, i32* compiled_code) {
+static void resolve_pending_labels(const LabelTable* labels, PendingLabelTable* pending, cell* compiled_code) {
 	for(size_t i = 0; i < pending->count; i++) {
-		i32 address = find_label_address(labels, pending->items[i].name);
-		if(address < 0) {
+		cell address = 0;
+		if(!find_label_address(labels, pending->items[i].name, &address)) {
 			fprintf(stderr, "[ERROR] Undefined label: %s\n", pending->items[i].name);
 			exit(1);
 		}
@@ -309,80 +313,113 @@ static void reserve_token_list(TokenList* list, size_t additional) {
 	list->capacity = new_capacity;
 }
 
-static void push_token(TokenList* list, i32 type, i32 value, bool has_value) {
+static void push_token(TokenList* list, ParsedToken token) {
 	reserve_token_list(list, 1);
-	list->items[list->count++] = (ParsedToken){ .type = type, .value = value, .has_value = has_value, .text = {0} };
-}
-
-static void push_named_token(TokenList* list, i32 type, const char* text) {
-	reserve_token_list(list, 1);
-	ParsedToken token = { .type = type, .value = 0, .has_value = false, .text = {0} };
-	strncpy_s(token.text, sizeof(token.text), text, _TRUNCATE);
 	list->items[list->count++] = token;
 }
 
 static ParsedToken pop_token(TokenList* list) {
 	if(list->count == 0) {
-		return (ParsedToken){ .type = _NULL, .value = 0, .has_value = false, .text = {0} };
+		return (ParsedToken){ .type = _NULL };
 	}
 	return list->items[--list->count];
 }
 
 static ParsedToken peek_token(TokenList* list) {
 	if(list->count == 0) {
-		return (ParsedToken){ .type = _NULL, .value = 0, .has_value = false, .text = {0} };
+		return (ParsedToken){ .type = _NULL };
 	}
 	return list->items[list->count - 1];
 }
 
-static void ensure_compiled_capacity(i32** compiled_code, size_t* capacity, size_t write_index, size_t additional) {
-	if(write_index + additional < *capacity) return;
+typedef struct {
+	cell* items;
+	size_t count;
+	size_t capacity;
+} CellBuffer;
 
-	size_t new_capacity = *capacity == 0 ? 64 : *capacity;
-	while(write_index + additional >= new_capacity) {
-		new_capacity *= 2;
+static void emit_cell(CellBuffer* code, cell value) {
+	if(code->count + 1 > code->capacity) {
+		size_t new_capacity = code->capacity == 0 ? 64 : code->capacity * 2;
+		cell* resized = realloc(code->items, sizeof(cell) * new_capacity);
+		if(resized == NULL) {
+			fprintf(stderr, "[ERROR] Failed to grow compiled code buffer\n");
+			exit(1);
+		}
+		code->items = resized;
+		code->capacity = new_capacity;
 	}
-
-	i32* resized = realloc(*compiled_code, sizeof(i32) * new_capacity);
-	if(resized == NULL) {
-		fprintf(stderr, "[ERROR] Failed to grow compiled code buffer\n");
-		exit(1);
-	}
-
-	*compiled_code = resized;
-	*capacity = new_capacity;
+	code->items[code->count++] = value;
 }
 
-static void emit_compiled_value(i32** compiled_code, size_t* capacity, size_t* write_index, i32 value) {
-	ensure_compiled_capacity(compiled_code, capacity, *write_index, 1);
-	(*compiled_code)[(*write_index)++] = value;
-}
-
-static void emit_compiled_token(i32** compiled_code, size_t* capacity, size_t* write_index, ParsedToken token) {
-	emit_compiled_value(compiled_code, capacity, write_index, token.type);
-	if(token.has_value) {
-		emit_compiled_value(compiled_code, capacity, write_index, token.value);
+static const char* token_symbol(int type) {
+	switch(type) {
+		case VALUE_ASSIGN: return "=";
+		case ADDRESS_ASSIGN: return ":";
+		case READ_ADDRESS: return "&";
+		case DEREFERENCE: return "*";
+		case MULTI: return "*";
+		case DIV: return "/";
+		case MODULO: return "%";
+		case BIT_AND: return "&&";
+		case BIT_OR: return "|";
+		case BIT_XOR: return "^";
+		case BIT_NOT: return "~";
+		case PLUS: return "+";
+		case MINUS: return "-";
+		case INC: return "++";
+		case DEC: return "--";
+		case EQUIV: return "==";
+		case NOT_EQUIV: return "!=";
+		case LESS: return "<";
+		case GREATER: return ">";
+		case LESS_EQUAL: return "<=";
+		case GREATER_EQUAL: return ">=";
+		case RIGHT_ARROW: return "->";
+		case LEFT_ARROW: return "<-";
+		case DEFINE_SCOPE_ITERATIONS: return "$";
+		case BREAK_FROM_SCOPE: return "?";
+		case INFINITE_LOOP: return "$$";
+		case PRINT: return "@";
+		case PRINT_LITERAL: return "@@";
+		case DEFINE_DATA_MEM_SIZE: return "#";
+		default: return "?";
 	}
 }
 
-static bool is_operand_token(i32 type) {
+static void compile_error(const char* message, int token_type) {
+	fprintf(stderr, "[ERROR] %s `%s`\n", message, token_symbol(token_type));
+	exit(1);
+}
+
+static bool is_operand_token(int type) {
 	switch(type) {
 		case VARIABLE:
 		case DATA_PTR_REF:
 		case PROG_PTR_REF:
 		case INT_LITERAL:
+		case IDENT:
 			return true;
 		default:
 			return false;
 	}
 }
 
-static bool is_binary_operator(i32 type) {
+// operands that can be written to, so they can be the target of `=`, `:`, `&`, `++`, `--`, `->`, and `<-`
+static bool is_target_token(int type) {
+	return type == VARIABLE || type == DATA_PTR_REF || type == PROG_PTR_REF;
+}
+
+static bool is_binary_operator(int type) {
 	switch(type) {
-		case ASSIGN:
+		case VALUE_ASSIGN:
 		case ADDRESS_ASSIGN:
 		case MULTI:
 		case DIV:
+		case MODULO:
+		case BIT_AND:
+		case BIT_OR:
+		case BIT_XOR:
 		case PLUS:
 		case MINUS:
 		case EQUIV:
@@ -397,17 +434,16 @@ static bool is_binary_operator(i32 type) {
 	}
 }
 
-static bool is_prefix_operator(i32 type) {
+static bool is_prefix_operator(int type) {
 	switch(type) {
-		case DEREF:
-		case DECLARE_REF:
+		case DEREFERENCE:
+		case READ_ADDRESS:
+		case BIT_NOT:
 		case RIGHT_ARROW:
 		case LEFT_ARROW:
-		case DEFINE_DATA_MEM_SIZE:
 		case DEFINE_SCOPE_ITERATIONS:
-		case INFINITE_LOOP:
-        case PRINT:
-        case PRINT_LITERAL:
+		case PRINT:
+		case PRINT_LITERAL:
 		case BREAK_FROM_SCOPE:
 			return true;
 		default:
@@ -415,14 +451,17 @@ static bool is_prefix_operator(i32 type) {
 	}
 }
 
-static bool is_postfix_operator(i32 type) {
+static bool is_postfix_operator(int type) {
 	return type == INC || type == DEC;
 }
 
-static int operator_precedence(i32 type) {
+// lowest to highest: assignment, comparison, |, ^, &&, + -, * / %, prefix operators
+// bitwise operators bind tighter than comparisons, so `C0 && 1 == 1` means `(C0 && 1) == 1`
+static int operator_precedence(int type) {
 	switch(type) {
-		case ASSIGN:
+		case VALUE_ASSIGN:
 		case ADDRESS_ASSIGN:
+		case BREAK_FROM_SCOPE:
 			return 1;
 		case EQUIV:
 		case NOT_EQUIV:
@@ -431,34 +470,38 @@ static int operator_precedence(i32 type) {
 		case LESS_EQUAL:
 		case GREATER_EQUAL:
 			return 2;
+		case BIT_OR:
+			return 3;
+		case BIT_XOR:
+			return 4;
+		case BIT_AND:
+			return 5;
 		case PLUS:
 		case MINUS:
-			return 3;
+			return 6;
 		case MULTI:
 		case DIV:
-			return 4;
-		case DEREF:
-		case DECLARE_REF:
+		case MODULO:
+			return 7;
+		case DEREFERENCE:
+		case READ_ADDRESS:
+		case BIT_NOT:
 		case RIGHT_ARROW:
 		case LEFT_ARROW:
-		case DEFINE_DATA_MEM_SIZE:
 		case DEFINE_SCOPE_ITERATIONS:
-		case INFINITE_LOOP:
-			return 5;
-		case BREAK_FROM_SCOPE:
-			return 1;
+			return 8;
 		default:
 			return 0;
 	}
 }
 
-static bool is_right_associative(i32 type) {
-	return type == ASSIGN || type == ADDRESS_ASSIGN;
+static bool is_right_associative(int type) {
+	return type == VALUE_ASSIGN || type == ADDRESS_ASSIGN;
 }
 
-static void consume_label_definition(TokenList* expression, LabelTable* labels, size_t write_index) {
+static void consume_label_definition(TokenList* expression, LabelTable* labels, cell address) {
 	while(expression->count >= 2 && expression->items[0].type == IDENT && expression->items[1].type == ADDRESS_ASSIGN) {
-		set_label_address(labels, expression->items[0].text, (i32)write_index);
+		set_label_address(labels, expression->items[0].text, address);
 		if(expression->count == 2) {
 			expression->count = 0;
 			return;
@@ -468,13 +511,8 @@ static void consume_label_definition(TokenList* expression, LabelTable* labels, 
 	}
 }
 
-static void flush_expression(TokenList* expression, LabelTable* labels, PendingLabelTable* pending, i32** compiled_code, size_t* compiled_capacity, size_t* write_index) {
-	if(expression->count == 0) return;
-
-	if(expression->count >= 2 && expression->items[0].type == DEFINE_DATA_MEM_SIZE && expression->items[1].type == INT_LITERAL) {
-		data_mem_size = expression->items[1].value > 0 ? (size_t)expression->items[1].value : 128;
-	}
-
+// shunting yard, infix -> postfix, parens only exist in this stage.
+static void to_postfix(const TokenList* expression, TokenList* postfix) {
 	TokenList operators = {0};
 	bool expect_operand = true;
 
@@ -482,80 +520,299 @@ static void flush_expression(TokenList* expression, LabelTable* labels, PendingL
 		ParsedToken token = expression->items[i];
 
 		if(token.type == L_PAREN) {
-			push_token(&operators, token.type, token.value, token.has_value);
+			push_token(&operators, token);
 			expect_operand = true;
 			continue;
 		}
 
 		if(token.type == R_PAREN) {
 			while(operators.count > 0 && peek_token(&operators).type != L_PAREN) {
-				emit_compiled_token(compiled_code, compiled_capacity, write_index, pop_token(&operators));
+				push_token(postfix, pop_token(&operators));
 			}
-			if(operators.count > 0 && peek_token(&operators).type == L_PAREN) {
-				pop_token(&operators);
+			if(operators.count == 0) {
+				fprintf(stderr, "[ERROR] Unmatched `)`\n");
+				exit(1);
 			}
+			pop_token(&operators);
 			expect_operand = false;
 			continue;
 		}
 
 		if(token.type == MULTI && expect_operand) {
-			token.type = DEREF;
+			token.type = DEREFERENCE;
 		}
 
-		if(token.type == IDENT) {
-			emit_compiled_value(compiled_code, compiled_capacity, write_index, INT_LITERAL);
-			size_t patch_index = *write_index;
-			emit_compiled_value(compiled_code, compiled_capacity, write_index, 0);
-			i32 address = find_label_address(labels, token.text);
-			if(address >= 0) {
-				(*compiled_code)[patch_index] = address;
-			} else {
-				add_pending_label(pending, token.text, patch_index);
+		// `~` takes no operands, so it goes straight to the output like an operand would
+		if(is_operand_token(token.type) || is_postfix_operator(token.type) || token.type == INFINITE_LOOP) {
+			// an operand right after a complete value starts a new sub-statement (e.g. the `D` in `$(C0) D : C1`),
+			// so everything waiting for the previous value has to be emitted first
+			if(is_operand_token(token.type) && !expect_operand) {
+				while(operators.count > 0 && peek_token(&operators).type != L_PAREN) {
+					push_token(postfix, pop_token(&operators));
+				}
 			}
-			expect_operand = false;
+			push_token(postfix, token);
+			if(token.type != INFINITE_LOOP) expect_operand = false;
 			continue;
 		}
 
-		if(is_operand_token(token.type)) {
-			emit_compiled_token(compiled_code, compiled_capacity, write_index, token);
-			expect_operand = false;
-			continue;
-		}
-
-		if(is_postfix_operator(token.type)) {
-			emit_compiled_value(compiled_code, compiled_capacity, write_index, token.type);
-			expect_operand = false;
-			continue;
+		if(token.type == DEFINE_DATA_MEM_SIZE) {
+			compile_error("Must be the only thing in its statement (e.g. `#128;`):", token.type);
 		}
 
 		if(!is_binary_operator(token.type) && !is_prefix_operator(token.type)) {
 			continue;
 		}
 
-		while(operators.count > 0 && peek_token(&operators).type != L_PAREN) {
+		// a prefix operator that directly follows another operator (e.g. the `*` in `&*C0`) has no operand
+		// yet, so it must not pop the operator before it, otherwise that operator ends up before its operand
+		bool is_nested_prefix = is_prefix_operator(token.type) && expect_operand;
+		while(!is_nested_prefix && operators.count > 0 && peek_token(&operators).type != L_PAREN) {
 			ParsedToken top = peek_token(&operators);
 			int top_precedence = operator_precedence(top.type);
 			int current_precedence = operator_precedence(token.type);
 			if(top_precedence > current_precedence || (top_precedence == current_precedence && !is_right_associative(token.type))) {
-				emit_compiled_token(compiled_code, compiled_capacity, write_index, pop_token(&operators));
+				push_token(postfix, pop_token(&operators));
 			} else {
 				break;
 			}
 		}
 
-		push_token(&operators, token.type, token.value, token.has_value);
+		push_token(&operators, token);
 		expect_operand = true;
 	}
 
 	while(operators.count > 0) {
 		ParsedToken token = pop_token(&operators);
-		if(token.type != L_PAREN && token.type != R_PAREN) {
-			emit_compiled_token(compiled_code, compiled_capacity, write_index, token);
+		if(token.type == L_PAREN) {
+			fprintf(stderr, "[ERROR] Unmatched `(`\n");
+			exit(1);
 		}
+		push_token(postfix, token);
 	}
 
 	free(operators.items);
+}
+
+// a run of postfix tokens that produces one value on the stack
+typedef struct {
+	size_t start;
+	// true if the fragment is a single variable, `D`, or `P`
+	bool is_target;
+} Fragment;
+
+static Fragment pop_fragment(Fragment* fragments, size_t* depth, int operator_type) {
+	if(*depth == 0) {
+		compile_error("Missing operand for", operator_type);
+	}
+	return fragments[--(*depth)];
+}
+
+static void require_target(Fragment fragment, int operator_type) {
+	if(!fragment.is_target) {
+		compile_error("Expected a variable, `D`, or `P` as the target of", operator_type);
+	}
+}
+
+static int mutation_access(int type) {
+	switch(type) {
+		case INC: return ACC_INC_VALUE;
+		case DEC: return ACC_DEC_VALUE;
+		case RIGHT_ARROW: return ACC_INC_ADDRESS;
+		case LEFT_ARROW: return ACC_DEC_ADDRESS;
+		default: return ACC_PUSH_VALUE;
+	}
+}
+
+// fold the target of `=`, `:`, `&`, `++`, `--`, `->`, and `<-` into a single typed instruction.
+// Ex: `C0 = C1 + 2` is `C0 C1 2 + =` in postfix and becomes `C1 2 + =C0`
+static void resolve_targets(const TokenList* postfix, TokenList* out) {
+	Fragment* fragments = malloc(sizeof(Fragment) * (postfix->count + 1));
+	if(fragments == NULL) {
+		fprintf(stderr, "[ERROR] Failed to allocate fragment stack\n");
+		exit(1);
+	}
+	size_t depth = 0;
+
+	for(size_t i = 0; i < postfix->count; i++) {
+		ParsedToken token = postfix->items[i];
+		token.access = ACC_PUSH_VALUE;
+
+		if(is_operand_token(token.type)) {
+			push_token(out, token);
+			fragments[depth++] = (Fragment){ .start = out->count - 1, .is_target = is_target_token(token.type) };
+			continue;
+		}
+
+		switch(token.type) {
+			case READ_ADDRESS: {
+				Fragment target = pop_fragment(fragments, &depth, token.type);
+				require_target(target, token.type);
+				out->items[target.start].access = ACC_PUSH_ADDRESS;
+				fragments[depth++] = (Fragment){ .start = target.start, .is_target = false };
+				break;
+			}
+			case INC:
+			case DEC:
+			case RIGHT_ARROW:
+			case LEFT_ARROW: {
+				Fragment target = pop_fragment(fragments, &depth, token.type);
+				require_target(target, token.type);
+				out->items[target.start].access = mutation_access(token.type);
+				break;
+			}
+			case VALUE_ASSIGN:
+			case ADDRESS_ASSIGN: {
+				pop_fragment(fragments, &depth, token.type);
+				Fragment target = pop_fragment(fragments, &depth, token.type);
+				require_target(target, token.type);
+				ParsedToken store = out->items[target.start];
+				store.access = token.type == VALUE_ASSIGN ? ACC_SET_VALUE : ACC_SET_ADDRESS;
+				// the target is always directly before the value, move it after the value as a store
+				memmove(out->items + target.start, out->items + target.start + 1, sizeof(ParsedToken) * (out->count - target.start - 1));
+				out->count--;
+				push_token(out, store);
+				break;
+			}
+			case INFINITE_LOOP:
+				push_token(out, token);
+				break;
+			case DEREFERENCE:
+			case BIT_NOT: {
+				Fragment address = pop_fragment(fragments, &depth, token.type);
+				push_token(out, token);
+				fragments[depth++] = (Fragment){ .start = address.start, .is_target = false };
+				break;
+			}
+			case DEFINE_SCOPE_ITERATIONS:
+			case BREAK_FROM_SCOPE:
+			case PRINT:
+			case PRINT_LITERAL:
+				pop_fragment(fragments, &depth, token.type);
+				push_token(out, token);
+				break;
+			default: {
+				pop_fragment(fragments, &depth, token.type);
+				Fragment left = pop_fragment(fragments, &depth, token.type);
+				push_token(out, token);
+				fragments[depth++] = (Fragment){ .start = left.start, .is_target = false };
+				break;
+			}
+		}
+	}
+
+	free(fragments);
+}
+
+static int operation_for_token(int type) {
+	switch(type) {
+		case DEFINE_SCOPE_ITERATIONS: return OP_DEFINE_SCOPE_ITERATIONS;
+		case BREAK_FROM_SCOPE: return OP_BREAK_FROM_SCOPE;
+		case INFINITE_LOOP: return OP_INFINITE_LOOP;
+		case PRINT: return OP_PRINT;
+		case PRINT_LITERAL: return OP_PRINT_LITERAL;
+		case DEREFERENCE: return OP_DEREFERENCE;
+		case PLUS: return OP_ADD;
+		case MINUS: return OP_SUB;
+		case MULTI: return OP_MUL;
+		case DIV: return OP_DIV;
+		case MODULO: return OP_MOD;
+		case BIT_AND: return OP_BIT_AND;
+		case BIT_OR: return OP_BIT_OR;
+		case BIT_XOR: return OP_BIT_XOR;
+		case BIT_NOT: return OP_BIT_NOT;
+		case EQUIV: return OP_EQUAL;
+		case NOT_EQUIV: return OP_NOT_EQUAL;
+		case LESS: return OP_LESS;
+		case LESS_EQUAL: return OP_LESS_EQUAL;
+		case GREATER: return OP_GREATER;
+		case GREATER_EQUAL: return OP_GREATER_EQUAL;
+		default: return -1;
+	}
+}
+
+// tokens -> memory cells
+static void emit_tokens(const TokenList* tokens, LabelTable* labels, PendingLabelTable* pending, CellBuffer* code) {
+	for(size_t i = 0; i < tokens->count; i++) {
+		ParsedToken token = tokens->items[i];
+		switch(token.type) {
+			case INT_LITERAL:
+				emit_cell(code, BC_TYPED(VT_LITERAL, ACC_PUSH_VALUE));
+				emit_cell(code, token.value);
+				break;
+			case IDENT: {
+				// labels compile to integer literals holding the label's address
+				emit_cell(code, BC_TYPED(VT_LITERAL, ACC_PUSH_VALUE));
+				size_t patch_index = code->count;
+				emit_cell(code, 0);
+				cell address = 0;
+				if(find_label_address(labels, token.text, &address)) {
+					code->items[patch_index] = address;
+				} else {
+					add_pending_label(pending, token.text, patch_index);
+				}
+				break;
+			}
+			case VARIABLE:
+				emit_cell(code, BC_TYPED(VT_VARIABLE, token.access));
+				emit_cell(code, token.value);
+				break;
+			case DATA_PTR_REF:
+				emit_cell(code, BC_TYPED(VT_DATA_PTR, token.access));
+				break;
+			case PROG_PTR_REF:
+				emit_cell(code, BC_TYPED(VT_PROG_PTR, token.access));
+				break;
+			default: {
+				int operation = operation_for_token(token.type);
+				if(operation >= 0) {
+					emit_cell(code, (cell)operation);
+				}
+				break;
+			}
+		}
+	}
+}
+
+static void flush_expression(TokenList* expression, LabelTable* labels, PendingLabelTable* pending, CellBuffer* code) {
+	if(expression->count == 0) return;
+
+	if(expression->items[0].type == DEFINE_DATA_MEM_SIZE) {
+		if(expression->count != 2 || expression->items[1].type != INT_LITERAL) {
+			compile_error("Expected a single integer literal after", DEFINE_DATA_MEM_SIZE);
+		}
+		cell size = expression->items[1].value;
+		data_mem_size = size > 0 ? (size_t)size : 128;
+		emit_cell(code, BC_TYPED(VT_META, META_DATA_MEM_SIZE));
+		emit_cell(code, (cell)data_mem_size);
+		expression->count = 0;
+		return;
+	}
+
+	TokenList postfix = {0};
+	TokenList resolved = {0};
+	to_postfix(expression, &postfix);
+	resolve_targets(&postfix, &resolved);
+	emit_tokens(&resolved, labels, pending, code);
+
+	free(postfix.items);
+	free(resolved.items);
 	expression->count = 0;
+}
+
+static cell read_number(const char* source, size_t code_len, size_t* index) {
+	int64_t value = 0;
+	while(*index < code_len && source[*index] >= '0' && source[*index] <= '9') {
+		if(value <= INT32_MAX) {
+			value = (value * 10) + (source[*index] - '0');
+		}
+		(*index)++;
+	}
+	if(value > INT32_MAX) {
+		print_warning(" Integer literal is larger than 32 bits, clamping to %d\n", INT32_MAX);
+		value = INT32_MAX;
+	}
+	return (cell)value;
 }
 
 static bool next_token_from_source(const char* source, size_t code_len, size_t* index, ParsedToken* token) {
@@ -581,26 +838,18 @@ static bool next_token_from_source(const char* source, size_t code_len, size_t* 
 
 	if(curr == 'C' && next >= '0' && next <= '9') {
 		(*index)++;
-		i32 value = 0;
-		while(*index < code_len && source[*index] >= '0' && source[*index] <= '9') {
-			value = (value * 10) + (source[*index] - '0');
-			(*index)++;
-		}
+		cell value = read_number(source, code_len, index);
 		*token = (ParsedToken){ .type = VARIABLE, .value = value, .has_value = true, .text = {0} };
 		return true;
 	}
 
 	if((curr >= '0' && curr <= '9') || (curr == '-' && next >= '0' && next <= '9')) {
-		i32 sign = 1;
+		cell sign = 1;
 		if(curr == '-') {
 			sign = -1;
 			(*index)++;
 		}
-		i32 value = 0;
-		while(*index < code_len && source[*index] >= '0' && source[*index] <= '9') {
-			value = (value * 10) + (source[*index] - '0');
-			(*index)++;
-		}
+		cell value = read_number(source, code_len, index);
 		*token = (ParsedToken){ .type = INT_LITERAL, .value = value * sign, .has_value = true, .text = {0} };
 		return true;
 	}
@@ -672,16 +921,26 @@ static bool next_token_from_source(const char* source, size_t code_len, size_t* 
 		*token = (ParsedToken){ .type = GREATER_EQUAL, .value = 0, .has_value = false };
 		return true;
 	}
-    if(curr == '%' && next == '%') {
+    if(curr == '@' && next == '@') {
         *index += 2;
         *token = (ParsedToken){ .type = PRINT_LITERAL, .value = 0, .has_value = false };
         return true;
     }
+	if(curr == '&' && next == '&') {
+		*index += 2;
+		*token = (ParsedToken){ .type = BIT_AND, .value = 0, .has_value = false };
+		return true;
+	}
+	if(curr == '$' && next == '$') {
+		*index += 2;
+		*token = (ParsedToken){ .type = INFINITE_LOOP, .value = 0, .has_value = false };
+		return true;
+	}
 
 	switch(curr) {
 		case '=':
 			(*index)++;
-			*token = (ParsedToken){ .type = ASSIGN, .value = 0, .has_value = false };
+			*token = (ParsedToken){ .type = VALUE_ASSIGN, .value = 0, .has_value = false };
 			return true;
 		case ':':
 			(*index)++;
@@ -713,7 +972,7 @@ static bool next_token_from_source(const char* source, size_t code_len, size_t* 
 			return true;
 		case '&':
 			(*index)++;
-			*token = (ParsedToken){ .type = DECLARE_REF, .value = 0, .has_value = false };
+			*token = (ParsedToken){ .type = READ_ADDRESS, .value = 0, .has_value = false };
 			return true;
 		case '#':
 			(*index)++;
@@ -735,26 +994,38 @@ static bool next_token_from_source(const char* source, size_t code_len, size_t* 
 			(*index)++;
 			*token = (ParsedToken){ .type = DEFINE_SCOPE_ITERATIONS, .value = 0, .has_value = false };
 			return true;
-		case '^':
+		case '?':
 			(*index)++;
 			*token = (ParsedToken){ .type = BREAK_FROM_SCOPE, .value = 0, .has_value = false };
 			return true;
+		case '^':
+			(*index)++;
+			*token = (ParsedToken){ .type = BIT_XOR, .value = 0, .has_value = false };
+			return true;
 		case '~':
 			(*index)++;
-			*token = (ParsedToken){ .type = INFINITE_LOOP, .value = 0, .has_value = false };
+			*token = (ParsedToken){ .type = BIT_NOT, .value = 0, .has_value = false };
+			return true;
+		case '|':
+			(*index)++;
+			*token = (ParsedToken){ .type = BIT_OR, .value = 0, .has_value = false };
 			return true;
 		case '(':
 			(*index)++;
-			*token = (ParsedToken){ .type = R_PAREN, .value = 0, .has_value = false };
+			*token = (ParsedToken){ .type = L_PAREN, .value = 0, .has_value = false };
 			return true;
 		case ')':
 			(*index)++;
-			*token = (ParsedToken){ .type = L_PAREN, .value = 0, .has_value = false };
+			*token = (ParsedToken){ .type = R_PAREN, .value = 0, .has_value = false };
 			return true;
-        case '%':
+        case '@':
             (*index)++;
             *token = (ParsedToken){ .type = PRINT, .value = 0, .has_value = false };
             return true;
+		case '%':
+			(*index)++;
+			*token = (ParsedToken){ .type = MODULO, .value = 0, .has_value = false };
+			return true;
 		default:
 			print_warning(" Skipping unknown token '%c' at index %zu\n", curr, *index);
 			(*index)++;
@@ -762,7 +1033,7 @@ static bool next_token_from_source(const char* source, size_t code_len, size_t* 
 	}
 }
 
-i32* parse(bool verbose, FILE* source_file) {
+u8* parse(bool verbose, FILE* source_file, size_t* out_len) {
 	char* source_code;
 	size_t code_len = 0;
 	int current_char;
@@ -798,15 +1069,7 @@ i32* parse(bool verbose, FILE* source_file) {
 
 	print_debug(verbose, " Source code:\n%s\n", source_code);
 
-	size_t compiled_capacity = code_len > 0 ? code_len * 4 : 64;
-	i32* compiled_code = malloc(sizeof(i32) * compiled_capacity);
-	if(compiled_code == NULL) {
-		fprintf(stderr, "[ERROR] Failed to allocate memory for compiled code\n");
-		free(source_code);
-		exit(1);
-	}
-
-	size_t write_index = 0;
+	CellBuffer code = {0};
 	TokenList expression = {0};
 	LabelTable labels = {0};
 	PendingLabelTable pending = {0};
@@ -816,39 +1079,37 @@ i32* parse(bool verbose, FILE* source_file) {
 	// begin parsing
 	while(next_token_from_source(source_code, code_len, &index, &token)) {
 		if(token.type == EOS) {
-			consume_label_definition(&expression, &labels, write_index);
+			consume_label_definition(&expression, &labels, (cell)code.count);
 			if(expression.count > 0) {
-				flush_expression(&expression, &labels, &pending, &compiled_code, &compiled_capacity, &write_index);
-				emit_compiled_value(&compiled_code, &compiled_capacity, &write_index, EOS);
+				flush_expression(&expression, &labels, &pending, &code);
+				emit_cell(&code, BC_EOS);
 			}
 			continue;
 		}
 
 		if(token.type == BEGIN_SCOPE || token.type == END_SCOPE) {
-			consume_label_definition(&expression, &labels, write_index);
-			flush_expression(&expression, &labels, &pending, &compiled_code, &compiled_capacity, &write_index);
-			emit_compiled_value(&compiled_code, &compiled_capacity, &write_index, token.type);
+			consume_label_definition(&expression, &labels, (cell)code.count);
+			flush_expression(&expression, &labels, &pending, &code);
+			emit_cell(&code, token.type == BEGIN_SCOPE ? OP_BEGIN_SCOPE : OP_END_SCOPE);
 			continue;
 		}
 
-		if(token.type == IDENT) {
-			push_named_token(&expression, token.type, token.text);
-		} else {
-			push_token(&expression, token.type, token.value, token.has_value);
-		}
+		push_token(&expression, token);
 	}
 
-	consume_label_definition(&expression, &labels, write_index);
-	flush_expression(&expression, &labels, &pending, &compiled_code, &compiled_capacity, &write_index);
-	emit_compiled_value(&compiled_code, &compiled_capacity, &write_index, EOD);
-	resolve_pending_labels(&labels, &pending, compiled_code);
+	consume_label_definition(&expression, &labels, (cell)code.count);
+	flush_expression(&expression, &labels, &pending, &code);
+	emit_cell(&code, BC_EOD);
+	resolve_pending_labels(&labels, &pending, code.items);
 
+	u8* bytecode = bc_encode(code.items, code.count, out_len);
+
+	free(code.items);
 	free(labels.items);
 	free(pending.items);
 	free(expression.items);
 	fclose(source_file);
 	free(source_code);
 
-	return compiled_code;
+	return bytecode;
 }
-

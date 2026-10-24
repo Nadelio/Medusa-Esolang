@@ -5,7 +5,7 @@ Not much else to it.
 
 Its unique feature is that the program is compiled and loaded into the same memory space as your working data.\
 This means that you can modify your program code at runtime!\
-Although there it isn't very strongly supported, you just *can* do it.
+Although it isn't very strongly supported, you just *can* do it.
 
 The parser compiles from infix to prefix using shunting yard.\
 Then the interpreter is a stack machine.
@@ -21,7 +21,7 @@ Then the interpreter is a stack machine.
 </p>
 
 ## Meta Instructions
-`#128` - Allocate 128 bytes for data space (only valid at the very beginning of a program)
+`#128` - Allocate 128 cells for data space (only valid at the very beginning of a program)
 
 ## Variable Instructions
 `C0 : 12` - set address of variable\
@@ -47,7 +47,17 @@ Then the interpreter is a stack machine.
 `C0 + 12` - add\
 `C0 - 12` - sub\
 `C0 * 1` - multiplication\
-`C0 / 1` - integer division
+`C0 / 1` - integer division\
+`C0 % 3` - modulo (remainder)
+
+## Bitwise Instructions
+`C0 && C1` - bitwise and\
+`C0 | C1` - bitwise or\
+`C0 ^ C1` - bitwise xor\
+`~C0` - bitwise not (flips every bit)
+
+> [!note]
+> Bitwise operators bind tighter than comparisons (`C0 && 1 == 1` means `(C0 && 1) == 1`), but looser than `+` and `-`. From loosest to tightest: `|`, `^`, `&&`.
 
 ## Conditional Instructions
 `C0 == C1` - is equal\
@@ -59,24 +69,25 @@ Then the interpreter is a stack machine.
 
 ## Scopes and Control Flow Instructions
 `[ $10 ... ]` - loop 10 times\
-`[ ~ ... ]` - loop infinitely\
-`[ ~ ... C0 != C1 ^ ]` - break from infinite loop if C0 is not equal to C1\
+`[ $$ ... ]` - loop infinitely\
+`[ $$ ... C0 != C1 ? ]` - break from infinite loop if C0 is not equal to C1\
 `C0 == C1 [ $1 -> P ]` - if C0 is equal to C1, move the program pointer once to the right\
 `FOO:` - create label\
 `P : FOO` - jump to label
 
 ## Miscellaneous Instructions
-`% ...` - print the following integer as an ascii character\
-`%% ...` - print the following integer\
+`@ ...` - print the following integer as an ascii character\
+`@@ ...` - print the following integer\
 `// ...` - comments (these are stripped from the final compiled program, obviously)\
 `'a'` - a single character (syntax sugar, compiles to an `I...` instruction)\
-`%"..."` - prints a string (syntax sugar, compiles to repeated `%I...` instructions)\
+`@"..."` - prints a string (syntax sugar, compiles to repeated `@I...` instructions)\
 `D = "..."` - writes a string to memory starting at where the data pointer is currently (syntax sugar, compiles to repeated `D = I...; -> D;` instructions)
 
 > [!note]
-> - `%D` prints the value currently under the data pointer.
+> - `@D` prints the value currently under the data pointer.
 > - `*D` dereferences the address stored in the current data cell.
-> - Integers compile to TWO bytecode instructions `I` and then the integer.
+> - Values, variables, and memory cells are 32-bit signed integers, and every address counts cells.
+> - Integers compile to TWO cells in memory, the `I` instruction and then the integer (1, 2, or 4 bytes in the exported binary, see [BYTECODE_STANDARD.md](BYTECODE_STANDARD.md)).
 > - The interpreter is a stack machine.
 > - The compiler/parser converts infix expressions to postfix.
 > - Variables are automatically created immediately after the program data ends in memory
@@ -102,5 +113,4 @@ process:
     // loop
     P : process;
 ```
-
 

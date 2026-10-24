@@ -4,15 +4,15 @@
 C10 = &D;
 
 // single-character literals
-%'S'; %'u'; %'g'; %'a'; %'r'; %%10;
+@'S'; @'u'; @'g'; @'a'; @'r'; @@10;
 
 // print-string sugar
-%"Hello from Medusa\n";
+@"Hello from Medusa\n";
 
 // write-string-to-memory sugar
 D = "OK";
 D : C10;
-%D;
+@D;
 -> D;
-%D;
-%%10;
+@D;
+@@10;
